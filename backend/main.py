@@ -1,3 +1,4 @@
+from sqlalchemy import text
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -23,7 +24,7 @@ def root():
 
 @app.get("/health/db")
 def db_health(db: Session = Depends(get_db)):
-    result = db.execute("SELECT 1").scalar()
+    result = db.execute(text("SELECT 1")).scalar()
     return {"database_connected": result == 1}
 
 
