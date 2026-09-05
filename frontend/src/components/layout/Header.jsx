@@ -1,6 +1,7 @@
 import React from "react";
 import { Search, Bell, Shield, Sun, Moon, ChevronDown } from "lucide-react";
 import { useTheme } from "../../context/ThemeContext";
+import { getCurrentUser, setCurrentUserRole } from "../../services/auth";
 
 export const Header = () => {
   const { theme, toggleTheme } = useTheme();
@@ -63,8 +64,33 @@ export const Header = () => {
           }}
         >
           <Shield size={14} />
-          <span>Role: Senior Sales Rep</span>
+          <span>{`Role: ${getCurrentUser().role === "sales_manager" ? "Sales Manager" : "Sales Rep"}`}</span>
         </div>
+        {/* Role Switch Dropdown for testing */}
+        <select
+          style={{ marginLeft: "12px", padding: "4px 8px", borderRadius: "4px" }}
+          value={getCurrentUser().role}
+          onChange={(e) => {
+            setCurrentUserRole(e.target.value);
+            // Redirect after role change
+            const newRole = e.target.value;
+            if (newRole === "sales_rep") {
+              window.location.href = "/dashboard";
+            } else if (newRole === "sales_manager") {
+              window.location.href = "/approvals";
+            } else if (newRole === "customer") {
+              window.location.href = "/customer/dashboard";
+            } else if (newRole === "admin") {
+              window.location.href = "/admin/dashboard";
+            }
+          }}
+        >
+          <option value="sales_rep">Sales Rep</option>
+          <option value="sales_manager">Sales Manager</option>
+          <option value="customer">Customer</option>
+          <option value="finance_operations">Finance / Operations</option>
+          <option value="admin">Admin</option>
+        </select>
 
         {/* Global Dark / Light Theme Toggle Button */}
         <button

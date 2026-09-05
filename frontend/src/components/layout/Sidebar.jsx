@@ -11,22 +11,49 @@ import {
   Users,
   Settings,
   Zap,
-  Sparkles
+  Sparkles,
+  Plus,
+  ClipboardList,
+  Package,
+  Building2,
+  ShieldCheck
 } from "lucide-react";
+import { getCurrentUser } from "../../services/auth";
 
 export const Sidebar = () => {
-  const navItems = [
+  const user = getCurrentUser();
+  const baseNavItems = [
     { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
     { label: "Deals & Pipeline", path: "/deals", icon: Briefcase },
+    { label: "New Deal", path: "/deals/new", icon: Plus },
     { label: "New Quotation", path: "/quotations/new", icon: FileText, tag: "Builder" },
-    { label: "Approvals Center", path: "/approvals", icon: CheckCircle2, badge: "2" },
+    { label: "My Quotations", path: "/quotations", icon: ClipboardList },
+    { label: "Approvals Center", path: "/approvals", icon: CheckCircle2, badge: "2", managerOnly: true },
     { label: "Fulfillment", path: "/fulfillment", icon: Zap },
-    { label: "Deal Health", path: "/deal-health", icon: Activity, tag: "AI" },
+    { label: "Deal Health", path: "/deal-health", icon: Activity, tag: "AI", managerOnly: true },
     { label: "Simulator", path: "/simulator/deal-301", icon: Sliders },
     { label: "Customer Portal", path: "/negotiation/deal-301", icon: MessageSquare },
     { label: "Customers", path: "/customer", icon: Users },
-    { label: "Admin Console", path: "/admin", icon: Settings }
+    { label: "Admin Dashboard", path: "/admin/dashboard", icon: LayoutDashboard, adminOnly: true },
+    { label: "User Management", path: "/admin/users", icon: Users, adminOnly: true },
+    { label: "Customer Management", path: "/admin/customers", icon: Building2, adminOnly: true },
+    { label: "Product / Catalog", path: "/admin/products", icon: Package, adminOnly: true },
+    { label: "Governance", path: "/admin/governance", icon: ShieldCheck, adminOnly: true },
+    { label: "System Activity", path: "/admin/activity", icon: Activity, adminOnly: true },
+    // Finance / Operations navigation (visible only to finance role)
+    { label: "Finance Dashboard", path: "/finance/dashboard", icon: LayoutDashboard, financeOnly: true },
+    { label: "Finance Approvals", path: "/finance/approvals", icon: CheckCircle2, financeOnly: true },
+    { label: "Fulfillment", path: "/finance/fulfillment", icon: Package, financeOnly: true },
+    { label: "Billing", path: "/finance/billing", icon: FileText, financeOnly: true },
+    { label: "Finance Activity", path: "/finance/activity", icon: Activity, financeOnly: true }
   ];
+  const navItems = baseNavItems.filter(item => {
+    if (item.adminOnly) return user.role === "admin";
+    if (item.managerOnly) return user.role === "sales_manager";
+    if (item.financeOnly) return user.role === "finance_operations";
+    return true;
+  });
+
 
   return (
     <aside
@@ -155,6 +182,7 @@ export const Sidebar = () => {
         <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
           Rule Engine: <span style={{ color: "var(--text-secondary)" }}>Active</span>
         </div>
+
       </div>
     </aside>
   );
