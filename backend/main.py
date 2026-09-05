@@ -336,6 +336,235 @@ def get_inventory(
 
     return inventory
 
+# ==========================================
+# FULFILLMENT
+# ==========================================
+
+from services.fulfillment_service import fulfill_order
+
+@app.post("/api/orders/{order_id}/fulfillment/preview", response_model=schemas.FulfillmentPreviewResponse, tags=["Fulfillment"])
+def preview_fulfillment(order_id: int, db: Session = Depends(get_db)):
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+        
+    try:
+        res = fulfill_order(db, order)
+        db.rollback() 
+        return res
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/orders/{order_id}/fulfillment", response_model=schemas.FulfillmentStatusResponse, tags=["Fulfillment"])
+def confirm_fulfillment(order_id: int, req: schemas.ConfirmFulfillmentRequest = None, db: Session = Depends(get_db)):
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+        
+    manual_allocations = []
+    if req and req.manual_allocations:
+        manual_allocations = [m.model_dump() for m in req.manual_allocations]
+        
+    try:
+        res = fulfill_order(db, order, manual_allocations)
+        db.commit()
+        db.refresh(order)
+        
+        return {
+            "total_fulfilled_quantity": res["total_fulfilled_quantity"],
+            "shipment_count": res["shipment_count"],
+            "estimated_shipping_cost": res["estimated_shipping_cost"],
+            "fulfillments": order.fulfillments,
+            "backorders": order.backorders
+        }
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/orders/{order_id}/fulfillment", response_model=schemas.FulfillmentStatusResponse, tags=["Fulfillment"])
+def get_fulfillment_status(order_id: int, db: Session = Depends(get_db)):
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+        
+    fulfillments = db.query(models.Fulfillment).filter(models.Fulfillment.order_id == order_id).all()
+    backorders = db.query(models.Backorder).filter(models.Backorder.order_id == order_id).all()
+    
+    total_fulfilled = sum(f.quantity for f in fulfillments)
+    warehouses_used = set(f.warehouse_id for f in fulfillments)
+    
+    return {
+        "total_fulfilled_quantity": total_fulfilled,
+        "shipment_count": len(warehouses_used),
+        "estimated_shipping_cost": 0.0,
+        "fulfillments": fulfillments,
+        "backorders": backorders
+    }
+
+# ==========================================
+# BILLING
+# ==========================================
+from services.billing_service import generate_initial_billing, update_subscription_quantity
+
+@app.post("/api/orders/{order_id}/billing", response_model=schemas.BillingStatusResponse, tags=["Billing"])
+def generate_billing(order_id: int, db: Session = Depends(get_db)):
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+        
+    try:
+        generate_initial_billing(db, order)
+        db.commit()
+        db.refresh(order)
+        
+        invoices = db.query(models.Invoice).filter_by(order_id=order.id).order_by(models.Invoice.id.asc()).all()
+        subscriptions = db.query(models.Subscription).filter_by(order_id=order.id).all()
+        
+        return {
+            "order_id": order.id,
+            "order_payment_status": order.payment_status,
+            "invoices": invoices,
+            "subscriptions": subscriptions
+        }
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/orders/{order_id}/billing", response_model=schemas.BillingStatusResponse, tags=["Billing"])
+def get_billing_status(order_id: int, db: Session = Depends(get_db)):
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+        
+    invoices = db.query(models.Invoice).filter_by(order_id=order.id).order_by(models.Invoice.id.asc()).all()
+    subscriptions = db.query(models.Subscription).filter_by(order_id=order.id).all()
+    
+    return {
+        "order_id": order.id,
+        "order_payment_status": order.payment_status,
+        "invoices": invoices,
+        "subscriptions": subscriptions
+    }
+
+@app.patch("/api/subscriptions/{subscription_id}/quantity", response_model=schemas.SubscriptionQuantityUpdateResponse, tags=["Billing"])
+def update_sub_quantity(subscription_id: int, req: schemas.SubscriptionQuantityUpdate, db: Session = Depends(get_db)):
+    sub = db.query(models.Subscription).filter_by(id=subscription_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+        
+    try:
+        invoice = update_subscription_quantity(db, sub, req.new_quantity)
+        db.commit()
+        db.refresh(sub)
+        return {
+            "subscription": sub,
+            "prorated_invoice": invoice
+        }
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==========================================
+# CUSTOMER PORTAL
+# ==========================================
+from fastapi import Header
+from services.negotiation_service import submit_customer_counteroffer, get_negotiation_history
+
+def get_portal_customer_id(x_customer_id: int = Header(..., description="Mock Customer Identity")):
+    return x_customer_id
+
+def map_portal_quotation(quote: models.Quotation):
+    lines = []
+    for line in quote.lines:
+        lines.append({
+            "id": line.id,
+            "product_name": line.product.name,
+            "quantity": line.quantity,
+            "unit_price": float(line.unit_price),
+            "discount_percent": float(line.discount_percent),
+            "line_total": float(line.line_total)
+        })
+    return {
+        "id": quote.id,
+        "quotation_number": quote.quotation_number,
+        "status": quote.status,
+        "subtotal": float(quote.subtotal),
+        "tax_total": float(quote.tax_total),
+        "grand_total": float(quote.grand_total),
+        "lines": lines,
+        "negotiation_comments": quote.negotiation_comments
+    }
+
+@app.get("/api/portal/quotations", response_model=list[schemas.PortalQuotationResponse], tags=["Portal"])
+def portal_list_quotations(customer_id: int = Depends(get_portal_customer_id), db: Session = Depends(get_db)):
+    quotations = db.query(models.Quotation).filter(models.Quotation.customer_id == customer_id).all()
+    return [map_portal_quotation(q) for q in quotations]
+
+@app.get("/api/portal/quotations/{quotation_id}", response_model=schemas.PortalQuotationResponse, tags=["Portal"])
+def portal_get_quotation(quotation_id: int, customer_id: int = Depends(get_portal_customer_id), db: Session = Depends(get_db)):
+    quote = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not quote:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+    if quote.customer_id != customer_id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this quotation")
+    return map_portal_quotation(quote)
+
+@app.get("/api/portal/quotations/{quotation_id}/negotiations", response_model=list[schemas.PortalNegotiationCommentResponse], tags=["Portal"])
+def portal_get_negotiations(quotation_id: int, customer_id: int = Depends(get_portal_customer_id), db: Session = Depends(get_db)):
+    quote = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not quote:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+    if quote.customer_id != customer_id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this quotation")
+    
+    return get_negotiation_history(db, quotation_id)
+
+@app.post("/api/portal/quotations/{quotation_id}/negotiate", response_model=schemas.PortalQuotationResponse, tags=["Portal"])
+def portal_submit_negotiation(
+    quotation_id: int, 
+    req: schemas.PortalNegotiationRequest, 
+    customer_id: int = Depends(get_portal_customer_id), 
+    db: Session = Depends(get_db)
+):
+    quote = db.query(models.Quotation).filter(models.Quotation.id == quotation_id).first()
+    if not quote:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+    if quote.customer_id != customer_id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this quotation")
+        
+    try:
+        submit_customer_counteroffer(
+            db=db,
+            quotation=quote,
+            customer_id=customer_id,
+            comment=req.comment,
+            proposed_discount_percent=req.proposed_discount_percent
+        )
+        db.commit()
+        db.refresh(quote)
+        return map_portal_quotation(quote)
+    except PermissionError as e:
+        db.rollback()
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ==========================================
 # APPLICATION START

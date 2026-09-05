@@ -168,96 +168,197 @@ backorder quantities.
 
 ---
 
-## 10. Product Types
+## 10. Product Types & Billing Triggers
 
 The MVP supports:
 
 ### One-time
-
-Billed once.
+Billed once. One-time quote lines are charged immediately.
 
 ### Recurring
-
-Has:
-
-- subscription plan
-- billing interval
-- next billing date
-
+Has a subscription plan, billing interval, and next billing date. Recurring quote lines create Subscription records.
 A single order can contain both.
+
+### Initial Billing Trigger & Invoice
+- Billing is generated explicitly after the order is approved.
+- It must NOT depend on fulfillment completion.
+- One API/service call will generate the initial billing records.
+- Repeated generation must be idempotent and must not create duplicate subscriptions/invoices.
+- The first subscription cycle is included in the initial Invoice along with one-time charges.
+- The Invoice is linked to the Order.
+- Order/Invoice payment status initially starts as `UNPAID`.
 
 ---
 
-## 11. Proration
+## 11. Proration & Subscription Changes
 
 When a recurring subscription changes during a billing cycle:
 
-prorated_charge =
-affected_days × daily_rate × quantity_difference
+prorated_charge = affected_days × daily_rate × quantity_difference
 
-The precise day-count convention must be documented by the implementation.
+### Day-Count Convention
+Use a simple deterministic convention:
+- monthly recurring billing period = 30 days
+- daily rate = subscription amount / 30
+- affected_days = number of days remaining in the current 30-day cycle
 
----
-
-## 12. Cancellation / Refund
-
-Cancellation may create:
-
-- partial refund
-OR
-- credit note
-
-based on configured rules.
+### Subscription Quantity Change
+- Quantity increase creates a prorated charge for the additional quantity for the remaining days.
+- Quantity decrease creates a prorated credit amount.
+- Update the subscription quantity after calculating the adjustment.
+- Do not silently delete billing history.
 
 ---
 
-## 13. Customer Negotiation
+## 12. Cancellation / Refunds
 
-Customer portal allows:
-
-- line-level questions
-- change requests
-- counter discounts
-- quotation confirmation
-
-Customer access must be restricted to their own quotation.
+For MVP:
+- Cancellation does not automatically issue a cash refund.
+- Any resulting credit/refund behavior is represented as a billing adjustment/credit decision and can be extended later.
 
 ---
 
-## 14. Negotiation Re-approval
+## 13. Billing Safety, Idempotency & Math
 
-When negotiation changes pricing:
-
-1. Recalculate discount risk.
-2. Compare against approval rules.
-3. If threshold is exceeded:
-   return quote to approval.
-4. Otherwise:
-   continue toward confirmation.
+- Initial billing cannot be generated twice for the same order.
+- Existing subscription/invoice records must not be duplicated.
+- Billing calculations must use deterministic rounding.
+- **Money Rounding**: Use decimal arithmetic rather than floating-point arithmetic for billing calculations. Round monetary results to 2 decimal places using a consistent Decimal rounding strategy.
 
 ---
 
-## 15. Deal Health
+## 14. Customer Portal Security & View
 
-A quote may be considered at risk because of:
+For the MVP, the Customer Portal uses a mock customer identity mechanism at the API boundary:
+- The caller supplies a `customer_id`.
+- Every portal quotation lookup MUST strictly enforce: `quotation.customer_id == caller_customer_id`.
+- A 403 Forbidden error must be returned when attempting to access another customer's quotation.
+- This is MOCK authentication and is not production-grade authentication.
 
-### Stalled Deal
+### Customer-Facing Quotation Data
+Customers may view:
+- quotation_number
+- status
+- subtotal, tax_total, grand_total
+- product name, quantity, unit price
+- applied customer-facing discount
+- negotiation comments relevant to their quotation
 
-Quotation has been inactive beyond a configurable number of days.
-
-### Discount Anomaly
-
-Current discount is significantly higher than the representative's historical average.
-
-### Delivery Slippage
-
-Expected delivery is delayed relative to the promised date.
-
-The implementation can initially use deterministic rules.
+Customers may NOT view internal operational information, including:
+- unit cost
+- risk score
+- internal approval chain / routing
+- manager or finance internal reasons
+- internal discount thresholds
 
 ---
 
-## 16. Payment Status
+## 15. Customer Counteroffer & Negotiation Flow
+
+### 15.1 Customer Counteroffer
+A Customer:
+- can view only quotations belonging to their customer account.
+- can submit a negotiation comment.
+- can optionally submit a `proposed_discount_percent`.
+- cannot directly approve or reject their own quotation.
+- cannot modify internal approval information.
+
+When a customer submits a counteroffer:
+- Create a `NegotiationComment` record.
+- Associate it with the quotation and customer.
+- Change the quotation status to `"draft"`.
+- Do NOT automatically create an `Approval` record.
+
+### 15.2 Negotiation History
+- `NegotiationComment` records must be preserved.
+- Do not delete previous negotiation messages.
+- A new customer counteroffer creates a new comment/record.
+
+### 15.3 Sales Rep Review
+A Sales Rep reviews the counteroffer and awaits action in the `"draft"` state.
+The Sales Rep:
+- may update the quotation/quote lines to reflect an accepted counteroffer.
+- may reject/ignore the proposal.
+- may submit the revised quotation through the existing `ApprovalService`.
+
+### 15.4 Re-approval
+When the Sales Rep submits the revised quotation:
+- Use the existing `ApprovalService`.
+- Create a new `Approval` record (a new approval round).
+- Evaluate the revised discount using the existing `DiscountService`.
+- Apply the existing approval thresholds.
+- Preserve previous `Approval` records as historical audit records.
+
+---
+
+## 16. Deal Health / Anomaly Detection
+
+A quotation or deal is evaluated using deterministic, explainable rules. The health status is categorized into an overall color (GREEN, YELLOW, RED) based on the presence and severity of anomalies.
+
+### 16.1 Deterministic Rules
+
+**1. HIGH DISCOUNT RISK**
+- **Trigger:** `quotation.risk_score > 10.0`
+- **Severity:** Critical
+- **Explanation:** Should include the current risk score.
+
+**2. NEGOTIATION FATIGUE**
+- **Trigger:** Count of `NegotiationComment` records > 2
+- **Severity:** Warning
+- **Explanation:** Should include the total negotiation comment count.
+
+**3. APPROVAL CHURN**
+- **Trigger:** Count of `Approval` records > 2, OR any `Approval` record has `status == "rejected"`
+- **Severity:**
+  - Rejected approval = Critical
+  - >2 approval records without a rejection = Warning
+
+**4. STALLED DEAL**
+- **Trigger:** `quotation.status` is `"draft"` or `"negotiating"`, AND the latest activity timestamp is older than 7 days.
+  - *Note:* The latest activity timestamp must be dynamically calculated as the maximum timestamp among `quotation.created_at`, `NegotiationComment.created_at`, and `Approval.created_at`. Do not rely on `last_activity_at`.
+- **Severity:** Warning
+
+**5. SUPPLY CHAIN BLOCKED**
+- **Trigger:** The quotation has an associated `Order` AND the `Order` has one or more `Backorder` records with `remaining_quantity > 0`.
+- **Severity:** Critical
+
+**6. PAYMENT RISK**
+- **Trigger:** The quotation has an associated `Order`, fulfillment exists, AND `order.payment_status == "UNPAID"`.
+- **Severity:** Critical
+
+### 16.2 Overall Health Status
+
+The overall status is determined by the anomalies detected:
+
+- **GREEN:** Zero anomalies
+- **YELLOW:** One non-critical anomaly, OR multiple warnings without a Critical anomaly
+- **RED:** Any Critical anomaly, OR two or more anomalies of any severity
+
+### 16.3 Explainability & Architecture
+
+Every detected anomaly must return:
+- anomaly type
+- severity
+- human-readable explanation
+- relevant measured value/count where useful
+
+Example:
+```json
+{
+  "type": "negotiation_fatigue",
+  "severity": "warning",
+  "message": "Customer has submitted 3 negotiation comments."
+}
+```
+
+- **No Machine Learning:** The MVP remains deterministic, rule-based, and derived solely from existing application data.
+- **Database:** No new tables or columns are required.
+- **Sales Manager View:** The dashboard should show quotation number, overall health status, anomaly count, anomaly explanations, supporting values, and current quotation status.
+- **Internal Only:** Do NOT expose internal restrictions to customers incorrectly; Deal Health is an internal sales/management view.
+
+---
+
+## 17. Payment Status
 
 Possible states should be explicit.
 
@@ -271,7 +372,7 @@ Invoice/order status must update when payment is recorded.
 
 ---
 
-## 17. Important Principle
+## 18. Important Principle
 
 Never make the UI the source of truth.
 

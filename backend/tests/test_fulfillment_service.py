@@ -181,8 +181,57 @@ def test_idempotency_no_double_allocate(db_session):
     res2 = fulfill_order(db_session, order)
     # Shouldn't double reserve
     assert inv.reserved_quantity == 10
+    assert len(order.fulfillments) == 1
+
+def test_manual_override_rejected_if_processed(db_session):
+    product, quotation, order = setup_basic_data(db_session)
+    w1 = Warehouse(name="W1", is_active=True)
+    db_session.add(w1)
+    db_session.flush()
     
-    # If we force reallocation by giving manual allocation, it should clear the old one.
+    inv = Inventory(product_id=product.id, warehouse_id=w1.id, quantity=20, reserved_quantity=0)
+    db_session.add(inv)
+    db_session.flush()
+    
+    # Process normally
+    fulfill_order(db_session, order)
+    
+    # Attempt manual override on already processed order
     manual = [{"product_id": product.id, "warehouse_id": w1.id, "quantity": 10}]
-    res3 = fulfill_order(db_session, order, manual_allocations=manual)
+    with pytest.raises(ValueError, match="Manual override rejected: Order has already been processed."):
+        fulfill_order(db_session, order, manual_allocations=manual)
+
+def test_partial_fulfillment_preserves_existing_records(db_session):
+    product, quotation, order = setup_basic_data(db_session)
+    w1 = Warehouse(name="W1", is_active=True)
+    db_session.add(w1)
+    db_session.flush()
+    
+    # Only 4 in stock initially
+    inv = Inventory(product_id=product.id, warehouse_id=w1.id, quantity=4, reserved_quantity=0)
+    db_session.add(inv)
+    db_session.flush()
+    
+    # Fulfill 4, backorder 6
+    fulfill_order(db_session, order)
+    assert inv.reserved_quantity == 4
+    assert len(order.fulfillments) == 1
+    assert len(order.backorders) == 1
+    
+    first_fulfillment_id = order.fulfillments[0].id
+    
+    # Now 10 more arrive in stock
+    inv.quantity += 10
+    db_session.flush()
+    
+    # Re-run fulfillment (should fulfill the backordered 6)
+    res = fulfill_order(db_session, order)
+    
+    # Total reserved should now be 10 (4 + 6)
     assert inv.reserved_quantity == 10
+    
+    # The original fulfillment must still exist untouched
+    assert any(f.id == first_fulfillment_id for f in order.fulfillments)
+    
+    # Total fulfillments should be 2 (the old 4, and the new 6)
+    assert len(order.fulfillments) == 2

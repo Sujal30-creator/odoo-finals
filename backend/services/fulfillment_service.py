@@ -30,44 +30,20 @@ def fulfill_order(db: Session, order: Order, manual_allocations: list = None) ->
     
     for f in existing_fulfillments:
         already_processed[f.product_id] = already_processed.get(f.product_id, 0) + f.quantity
-    for b in existing_backorders:
-        already_processed[b.product_id] = already_processed.get(b.product_id, 0) + b.remaining_quantity
+        warehouses_used.add(f.warehouse_id)
+        total_fulfilled += f.quantity
 
-    needs_allocation = False
-    for pid, required_qty in requirements.items():
-        if already_processed.get(pid, 0) < required_qty:
-            needs_allocation = True
-            break
-            
-    # If a manual allocation is forced, we clear and reallocate.
-    if not needs_allocation and not manual_allocations:
-        # Already fully allocated. Just return stats.
-        for f in existing_fulfillments:
-            warehouses_used.add(f.warehouse_id)
-            total_fulfilled += f.quantity
-            
-        return {
-            "total_fulfilled_quantity": total_fulfilled,
-            "shipment_count": len(warehouses_used),
-            "estimated_shipping_cost": estimated_shipping_cost
-        }
-        
-    # Clear existing allocations to avoid double-allocation
-    for f in existing_fulfillments:
-        # Release reservation
-        inv = db.query(Inventory).filter_by(product_id=f.product_id, warehouse_id=f.warehouse_id).first()
-        if inv:
-            inv.reserved_quantity -= f.quantity
-        db.delete(f)
-    for b in existing_backorders:
-        db.delete(b)
-        
-    db.flush()
+    has_existing_records = len(existing_fulfillments) > 0 or len(existing_backorders) > 0
+    if manual_allocations and has_existing_records:
+        raise ValueError("Manual override rejected: Order has already been processed.")
 
-    # Proceed with allocation
+    # Proceed with allocation for any unfulfilled remainder
     for pid, required_qty in requirements.items():
-        remaining_to_fulfill = required_qty
+        remaining_to_fulfill = required_qty - already_processed.get(pid, 0)
         
+        if remaining_to_fulfill <= 0:
+            continue
+            
         # Manual allocation override
         if manual_allocations:
             pid_allocs = [m for m in manual_allocations if m.get("product_id") == pid]
@@ -125,9 +101,16 @@ def fulfill_order(db: Session, order: Order, manual_allocations: list = None) ->
                 warehouses_used.add(inv.warehouse_id)
                 
         # Backorder unfulfilled remainder
+        existing_b = next((b for b in existing_backorders if b.product_id == pid), None)
         if remaining_to_fulfill > 0:
-            b = Backorder(order_id=order.id, product_id=pid, remaining_quantity=remaining_to_fulfill)
-            db.add(b)
+            if existing_b:
+                existing_b.remaining_quantity = remaining_to_fulfill
+            else:
+                b = Backorder(order_id=order.id, product_id=pid, remaining_quantity=remaining_to_fulfill)
+                db.add(b)
+        else:
+            if existing_b:
+                existing_b.remaining_quantity = 0
             
     db.flush()
     # Expire the collections so they reload in the test session
