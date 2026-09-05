@@ -36,6 +36,9 @@ class Product(Base):
     category = Column(String(80))
     price = Column(Numeric(12, 2), nullable=False)
     tax_rate = Column(Numeric(5, 2), nullable=False, default=0)
+    unit_cost = Column(Numeric(12, 2), nullable=False, default=0)
+    product_type = Column(String(20), nullable=False, default="one-time")
+    billing_interval = Column(String(20))
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
@@ -51,6 +54,8 @@ class Quotation(Base):
     discount_total = Column(Numeric(12, 2), nullable=False, default=0)
     tax_total = Column(Numeric(12, 2), nullable=False, default=0)
     grand_total = Column(Numeric(12, 2), nullable=False, default=0)
+    risk_score = Column(Numeric(5, 2), nullable=False, default=0)
+    last_activity_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
@@ -87,7 +92,9 @@ class Order(Base):
     quotation_id = Column(Integer, ForeignKey("quotations.id"), nullable=False)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
     status = Column(String(20), nullable=False, default="processing")
+    payment_status = Column(String(20), nullable=False, default="UNPAID")
     total_amount = Column(Numeric(12, 2), nullable=False, default=0)
+    promised_delivery_date = Column(TIMESTAMP(timezone=True))
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
@@ -109,3 +116,46 @@ class Inventory(Base):
     quantity = Column(Integer, nullable=False, default=0)
     reserved_quantity = Column(Integer, nullable=False, default=0)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+class DiscountRule(Base):
+    __tablename__ = "discount_rules"
+    id = Column(Integer, primary_key=True)
+    tier = Column(String(20))
+    category = Column(String(80))
+    max_discount_percent = Column(Numeric(5, 2), nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+    id = Column(Integer, primary_key=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
+    status = Column(String(20), nullable=False, default="active")
+    billing_interval = Column(String(20), nullable=False)
+    next_billing_date = Column(TIMESTAMP(timezone=True))
+    amount = Column(Numeric(12, 2), nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+class Backorder(Base):
+    __tablename__ = "backorders"
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    remaining_quantity = Column(Integer, nullable=False)
+    expected_fulfillment_date = Column(TIMESTAMP(timezone=True))
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+
+class NegotiationComment(Base):
+    __tablename__ = "negotiation_comments"
+    id = Column(Integer, primary_key=True)
+    quotation_id = Column(Integer, ForeignKey("quotations.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    customer_id = Column(Integer, ForeignKey("customers.id"))
+    comment = Column(Text, nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
