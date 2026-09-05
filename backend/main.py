@@ -4,6 +4,9 @@ from typing import List, Optional
 from datetime import datetime
 from enum import Enum
 
+# ==========================================
+# 1. ENUMS (For Data Validation)
+# ==========================================
 
 class Role(str, Enum):
     SALES_REP = "Sales Rep"
@@ -111,10 +114,6 @@ app = FastAPI(
     description="Intelligent, Self-Governing Sales Operations Platform Backend",
     version="1.0.0"
 )
-
-@app.get('/')
-def homePage():
-    return {'message':'Home Page'}
 
 # Mock Database for rapid prototyping before connecting Motor (Async MongoDB)
 db = {
