@@ -18,7 +18,7 @@ app.add_middleware(
 
 
 @app.get("/")
-def root():
+def root(models):
     return {"message": "DealFlow360 API is running"}
 
 
