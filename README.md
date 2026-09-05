@@ -1,21 +1,46 @@
-# Odoo Finals
+# DealFlow360
+
+An Intelligent, Self-Governing Sales Operations Platform.
 
 ## Overview
 
-This repository contains the source code, experiments, documentation, and tests for the Odoo Finals project.
+DealFlow360 manages the complete B2B sales workflow:
 
-## Project Status
+Quotation → Approval → Fulfillment → Billing → Customer Negotiation → Reporting
 
-🚧 Initial setup and development
+The system provides:
 
-## Project Structure
+- Multi-tier discount governance
+- Automated approval routing
+- Upsell and cross-sell recommendations
+- Multi-warehouse fulfillment
+- Hybrid one-time and recurring billing
+- Customer-facing quotation negotiation
+- Deal health monitoring
+- Discount anomaly detection
+- Sales reporting
+
+## Core Business Flow
 
 ```text
-odoo-finals/
-├── README.md
-├── .gitignore
-├── requirements.txt
-├── src/
-├── tests/
-├── notebooks/
-└── docs/
+Customer
+   ↓
+Quotation
+   ↓
+Discount Evaluation
+   ↓
+Approval
+   ↓
+Fulfillment
+   ↓
+Billing
+   ↓
+Customer Negotiation
+   ↓
+Reapproval when required
+   ↓
+Confirmation
+   ↓
+Payment
+   ↓
+Reporting

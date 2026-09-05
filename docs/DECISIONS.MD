@@ -1,27 +1,64 @@
 # Architecture Decisions
 
-## Decision 001
+## Decision Template
 
-Date: 2026-09-05
+### DEC-001
+
+Date:
+Owner:
 
 Decision:
-Use FastAPI for backend.
 
 Reason:
-- Fast to develop
-- Python ecosystem
-- Easy API testing
+
+Alternatives considered:
+
+Impact:
 
 ---
 
-## Decision 002
-
-Date: 2026-09-05
+## DEC-001 - MVP Strategy
 
 Decision:
-Use [MODEL/API] for the AI component.
+
+Prioritize a deterministic, explainable business-rule implementation
+over unnecessary ML complexity.
 
 Reason:
-- Required capability
-- Available API
-- Fits hackathon constraints
+
+The hackathon evaluates functional business workflows and requires
+core rules to work in application logic.
+
+Impact:
+
+Recommendation, anomaly and risk features can initially use rules,
+scoring and historical data instead of trained models.
+
+---
+
+## DEC-002 - Backend as Source of Truth
+
+Decision:
+
+Business decisions are validated by backend services.
+
+Reason:
+
+Prevents frontend-only logic from producing invalid orders.
+
+Impact:
+
+Frontend displays state; backend determines state.
+
+---
+
+## DEC-003 - Quote as Central Business Object
+
+Decision:
+
+Quotation connects customer, products, discounts, approvals,
+fulfillment, billing and negotiation.
+
+Reason:
+
+The quotation is the central object in the required end-to-end flow.
