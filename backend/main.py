@@ -1,112 +1,14 @@
-from fastapi import FastAPI, HTTPException, Depends, status
-from pydantic import BaseModel, EmailStr, Field
-from typing import List, Optional
-from datetime import datetime
-from enum import Enum
+from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from database import get_db
+import models
+
 
 # ==========================================
-# 1. ENUMS (For Data Validation)
-# ==========================================
-
-class Role(str, Enum):
-    SALES_REP = "Sales Rep"
-    SALES_MANAGER = "Sales Manager"
-    FINANCE = "Finance / Operations"
-    CUSTOMER = "Customer"
-    ADMIN = "Admin"
-
-class QuoteStatus(str, Enum):
-    DRAFT = "Draft"
-    PENDING_APPROVAL = "Pending Approval"
-    APPROVED = "Approved"
-    REJECTED = "Rejected"
-    CONVERTED = "Converted to Order"
-
-class OrderStatus(str, Enum):
-    PROCESSING = "Processing"
-    FULFILLED = "Fulfilled"
-    SHIPPED = "Shipped"
-
-# ==========================================
-# 2. PYDANTIC MODELS (Data Layer / MongoDB Schema Validation)
-# ==========================================
-
-# -- User & Customer Models --
-class UserBase(BaseModel):
-    name: str = Field(..., min_length=2, max_length=50)
-    email: EmailStr
-    role: Role
-
-class UserCreate(UserBase):
-    password: str = Field(..., min_length=8)
-
-class UserResponse(UserBase):
-    id: str
-    created_at: datetime
-
-class CustomerModel(BaseModel):
-    id: Optional[str] = None
-    name: str
-    contact_email: EmailStr
-    phone: Optional[str] = None
-    company_name: str
-    portal_access: bool = False
-
-# -- Product & Pricing Models --
-class ProductModel(BaseModel):
-    id: Optional[str] = None
-    name: str
-    category: str
-    base_price: float = Field(..., gt=0)
-    sku: str
-    in_stock: bool = True
-
-# -- Quotation Models --
-class QuoteItem(BaseModel):
-    product_id: str
-    quantity: int = Field(..., gt=0)
-    unit_price: float
-    discount_percentage: float = Field(default=0.0, ge=0.0, le=100.0)
-    
-    @property
-    def total(self) -> float:
-        return (self.quantity * self.unit_price) * (1 - (self.discount_percentage / 100))
-
-class QuotationModel(BaseModel):
-    id: Optional[str] = None
-    customer_id: str
-    sales_rep_id: str
-    items: List[QuoteItem]
-    status: QuoteStatus = QuoteStatus.DRAFT
-    total_amount: float
-    created_at: datetime = datetime.utcnow()
-
-# -- Approval Models --
-class ApprovalRequest(BaseModel):
-    quote_id: str
-    approver_id: str
-    status: QuoteStatus
-    rejection_reason: Optional[str] = None
-    margin_impact: Optional[float] = None
-
-# -- Order & Fulfillment Models --
-class OrderModel(BaseModel):
-    id: Optional[str] = None
-    quote_id: str
-    customer_id: str
-    total_amount: float
-    status: OrderStatus = OrderStatus.PROCESSING
-    created_at: datetime = datetime.utcnow()
-
-# -- Deal Health (AI/ML Integration Hook) --
-class DealHealthScore(BaseModel):
-    quote_id: str
-    win_probability_score: float = Field(..., ge=0.0, le=100.0)
-    risk_factors: List[str]
-    recommendation: str
-
-# ==========================================
-# 3. FASTAPI APPLICATION SETUP
+# FASTAPI APPLICATION
 # ==========================================
 
 app = FastAPI(
@@ -115,80 +17,290 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Mock Database for rapid prototyping before connecting Motor (Async MongoDB)
-db = {
-    "users": [],
-    "customers": [],
-    "products": [],
-    "quotations": [],
-    "orders": []
-}
 
 # ==========================================
-# 4. API ROUTES (Microservice Endpoints)
+# CORS
 # ==========================================
 
-# --- Auth & User Service ---
-@app.post("/auth/register", response_model=UserResponse, tags=["Auth"])
-async def register_user(user: UserCreate):
-    # Hash password in production
-    new_user = {**user.dict(), "id": f"usr_{len(db['users'])+1}", "created_at": datetime.utcnow()}
-    db["users"].append(new_user)
-    return new_user
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# --- Quotation Builder Service ---
-@app.post("/quotations/", response_model=QuotationModel, tags=["Quotations"])
-async def create_quotation(quote: QuotationModel):
-    quote.id = f"qt_{len(db['quotations'])+1}"
-    db["quotations"].append(quote.dict())
-    return quote
 
-@app.get("/quotations/{quote_id}", response_model=QuotationModel, tags=["Quotations"])
-async def get_quotation(quote_id: str):
-    for q in db["quotations"]:
-        if q["id"] == quote_id:
-            return q
-    raise HTTPException(status_code=404, detail="Quotation not found")
+# ==========================================
+# SYSTEM
+# ==========================================
 
-# --- Approvals Center ---
-@app.post("/approvals/process", tags=["Approvals"])
-async def process_approval(approval: ApprovalRequest):
-    for q in db["quotations"]:
-        if q["id"] == approval.quote_id:
-            q["status"] = approval.status
-            return {"message": f"Quote {approval.quote_id} status updated to {approval.status.value}"}
-    raise HTTPException(status_code=404, detail="Quotation not found")
+@app.get("/", tags=["System"])
+def root():
+    return {
+        "message": "DealFlow360 API is running",
+        "version": "1.0.0"
+    }
 
-# --- Order & Fulfillment Service ---
-@app.post("/orders/convert/{quote_id}", response_model=OrderModel, tags=["Orders"])
-async def convert_quote_to_order(quote_id: str):
-    quote = next((q for q in db["quotations"] if q["id"] == quote_id), None)
-    if not quote:
-        raise HTTPException(status_code=404, detail="Quotation not found")
-    if quote["status"] != QuoteStatus.APPROVED:
-        raise HTTPException(status_code=400, detail="Only approved quotes can be converted to orders")
-    
-    new_order = OrderModel(
-        id=f"ord_{len(db['orders'])+1}",
-        quote_id=quote_id,
-        customer_id=quote["customer_id"],
-        total_amount=quote["total_amount"]
+
+@app.get("/health/db", tags=["System"])
+def db_health(db: Session = Depends(get_db)):
+    try:
+        result = db.execute(text("SELECT 1")).scalar()
+
+        return {
+            "database_connected": result == 1
+        }
+
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database connection failed"
+        )
+
+
+# ==========================================
+# USERS
+# ==========================================
+
+@app.get("/users", tags=["Users"])
+def list_users(db: Session = Depends(get_db)):
+    return db.query(models.User).all()
+
+
+@app.get("/users/{user_id}", tags=["Users"])
+def get_user(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    user = (
+        db.query(models.User)
+        .filter(models.User.id == user_id)
+        .first()
     )
-    db["orders"].append(new_order.dict())
-    quote["status"] = QuoteStatus.CONVERTED
-    return new_order
 
-# --- Deal Health Dashboard (Prediction Hook) ---
-@app.get("/deal-health/{quote_id}", response_model=DealHealthScore, tags=["Deal Health"])
-async def get_deal_health(quote_id: str):
-    # Hook for Python ML models (e.g., XGBoost prediction logic)
-    return DealHealthScore(
-        quote_id=quote_id,
-        win_probability_score=85.5,
-        risk_factors=["High discount requested", "New customer"],
-        recommendation="Proceed with manager approval for discount."
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    return user
+
+
+# ==========================================
+# CUSTOMERS
+# ==========================================
+
+@app.get("/customers", tags=["Customers"])
+def list_customers(db: Session = Depends(get_db)):
+    return db.query(models.Customer).all()
+
+
+@app.get("/customers/{customer_id}", tags=["Customers"])
+def get_customer(
+    customer_id: int,
+    db: Session = Depends(get_db)
+):
+    customer = (
+        db.query(models.Customer)
+        .filter(models.Customer.id == customer_id)
+        .first()
     )
+
+    if not customer:
+        raise HTTPException(
+            status_code=404,
+            detail="Customer not found"
+        )
+
+    return customer
+
+
+# ==========================================
+# PRODUCTS
+# ==========================================
+
+@app.get("/products", tags=["Products"])
+def list_products(db: Session = Depends(get_db)):
+    return db.query(models.Product).all()
+
+
+@app.get("/products/{product_id}", tags=["Products"])
+def get_product(
+    product_id: int,
+    db: Session = Depends(get_db)
+):
+    product = (
+        db.query(models.Product)
+        .filter(models.Product.id == product_id)
+        .first()
+    )
+
+    if not product:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
+
+    return product
+
+
+# ==========================================
+# QUOTATIONS
+# ==========================================
+
+@app.get("/quotations", tags=["Quotations"])
+def list_quotations(db: Session = Depends(get_db)):
+    return db.query(models.Quotation).all()
+
+
+@app.get("/quotations/{quotation_id}", tags=["Quotations"])
+def get_quotation(
+    quotation_id: int,
+    db: Session = Depends(get_db)
+):
+    quotation = (
+        db.query(models.Quotation)
+        .filter(models.Quotation.id == quotation_id)
+        .first()
+    )
+
+    if not quotation:
+        raise HTTPException(
+            status_code=404,
+            detail="Quotation not found"
+        )
+
+    return quotation
+
+
+# ==========================================
+# APPROVALS
+# ==========================================
+
+@app.get("/approvals", tags=["Approvals"])
+def list_approvals(db: Session = Depends(get_db)):
+    return db.query(models.Approval).all()
+
+
+@app.get("/approvals/{approval_id}", tags=["Approvals"])
+def get_approval(
+    approval_id: int,
+    db: Session = Depends(get_db)
+):
+    approval = (
+        db.query(models.Approval)
+        .filter(models.Approval.id == approval_id)
+        .first()
+    )
+
+    if not approval:
+        raise HTTPException(
+            status_code=404,
+            detail="Approval not found"
+        )
+
+    return approval
+
+
+# ==========================================
+# ORDERS
+# ==========================================
+
+@app.get("/orders", tags=["Orders"])
+def list_orders(db: Session = Depends(get_db)):
+    return db.query(models.Order).all()
+
+
+@app.get("/orders/{order_id}", tags=["Orders"])
+def get_order(
+    order_id: int,
+    db: Session = Depends(get_db)
+):
+    order = (
+        db.query(models.Order)
+        .filter(models.Order.id == order_id)
+        .first()
+    )
+
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    return order
+
+
+# ==========================================
+# WAREHOUSES
+# ==========================================
+
+@app.get("/warehouses", tags=["Warehouses"])
+def list_warehouses(db: Session = Depends(get_db)):
+    return db.query(models.Warehouse).all()
+
+
+@app.get("/warehouses/{warehouse_id}", tags=["Warehouses"])
+def get_warehouse(
+    warehouse_id: int,
+    db: Session = Depends(get_db)
+):
+    warehouse = (
+        db.query(models.Warehouse)
+        .filter(models.Warehouse.id == warehouse_id)
+        .first()
+    )
+
+    if not warehouse:
+        raise HTTPException(
+            status_code=404,
+            detail="Warehouse not found"
+        )
+
+    return warehouse
+
+
+# ==========================================
+# INVENTORY
+# ==========================================
+
+@app.get("/inventory", tags=["Inventory"])
+def list_inventory(db: Session = Depends(get_db)):
+    return db.query(models.Inventory).all()
+
+
+@app.get("/inventory/{inventory_id}", tags=["Inventory"])
+def get_inventory(
+    inventory_id: int,
+    db: Session = Depends(get_db)
+):
+    inventory = (
+        db.query(models.Inventory)
+        .filter(models.Inventory.id == inventory_id)
+        .first()
+    )
+
+    if not inventory:
+        raise HTTPException(
+            status_code=404,
+            detail="Inventory record not found"
+        )
+
+    return inventory
+
+
+# ==========================================
+# APPLICATION START
+# ==========================================
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True
+    )
