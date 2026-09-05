@@ -49,7 +49,8 @@ Line 3 = 2 points over
 
 Combined excess = 7 points
 
-The implementation may define an appropriate normalized/blended risk formula.
+The implementation uses the simplest deterministic blended risk formula:
+**Blended Risk Score** = sum of all `risk_excess` points across all lines.
 
 The formula must be:
 
@@ -72,7 +73,10 @@ Sales Manager approval
 OR
 Sales Manager → Finance approval
 
-The exact thresholds are implementation decisions unless separately specified.
+The exact thresholds implemented are:
+- `risk_score == 0`: No approval required
+- `0 < risk_score <= 10`: Sales Manager approval
+- `risk_score > 10`: Finance approval
 
 Approval must be triggered automatically.
 

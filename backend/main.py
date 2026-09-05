@@ -5,7 +5,9 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 import models
-
+import schemas
+from services.discount_service import evaluate_quotation_discount
+from services.approval_service import submit_for_approval, process_approval
 
 # ==========================================
 # FASTAPI APPLICATION
@@ -147,61 +149,105 @@ def get_product(
 
 
 # ==========================================
-# QUOTATIONS
+# QUOTATIONS & APPROVALS (API)
 # ==========================================
 
-@app.get("/quotations", tags=["Quotations"])
-def list_quotations(db: Session = Depends(get_db)):
-    return db.query(models.Quotation).all()
+@app.post("/api/quotations", response_model=schemas.QuotationResponse, tags=["Quotations"])
+def create_quotation(quote: schemas.QuotationCreate, db: Session = Depends(get_db)):
+    db_quote = models.Quotation(**quote.model_dump())
+    db.add(db_quote)
+    db.commit()
+    db.refresh(db_quote)
+    return db_quote
 
+@app.get("/api/quotations/{id}", response_model=schemas.QuotationResponse, tags=["Quotations"])
+def get_api_quotation(id: int, db: Session = Depends(get_db)):
+    quote = db.query(models.Quotation).filter(models.Quotation.id == id).first()
+    if not quote:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+    return quote
 
-@app.get("/quotations/{quotation_id}", tags=["Quotations"])
-def get_quotation(
-    quotation_id: int,
-    db: Session = Depends(get_db)
-):
-    quotation = (
-        db.query(models.Quotation)
-        .filter(models.Quotation.id == quotation_id)
-        .first()
+@app.post("/api/quotations/{id}/lines", response_model=schemas.QuoteLineResponse, tags=["Quotations"])
+def add_quote_line(id: int, line: schemas.QuoteLineCreate, db: Session = Depends(get_db)):
+    quote = db.query(models.Quotation).filter(models.Quotation.id == id).first()
+    if not quote:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+        
+    line_total = float(line.quantity) * float(line.unit_price) * (1 - float(line.discount_percent) / 100.0)
+    db_line = models.QuoteLine(
+        quotation_id=id,
+        line_total=line_total,
+        **line.model_dump()
     )
+    db.add(db_line)
+    
+    quote.subtotal = float(quote.subtotal or 0) + (float(line.quantity) * float(line.unit_price))
+    quote.discount_total = float(quote.discount_total or 0) + (float(line.quantity) * float(line.unit_price) * (float(line.discount_percent) / 100.0))
+    quote.grand_total = float(quote.grand_total or 0) + line_total
+    
+    db.commit()
+    db.refresh(db_line)
+    return db_line
 
-    if not quotation:
-        raise HTTPException(
-            status_code=404,
-            detail="Quotation not found"
-        )
+@app.post("/api/quotations/{id}/evaluate-discount", response_model=schemas.DiscountEvaluationResponse, tags=["Quotations"])
+def evaluate_discount_endpoint(id: int, db: Session = Depends(get_db)):
+    quote = db.query(models.Quotation).filter(models.Quotation.id == id).first()
+    if not quote:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+        
+    try:
+        res = evaluate_quotation_discount(db, quote)
+        db.commit()
+        return res
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
 
-    return quotation
+@app.post("/api/quotations/{id}/submit-approval", response_model=schemas.SubmitApprovalResponse, tags=["Quotations"])
+def submit_approval_endpoint(id: int, req: schemas.SubmitApprovalRequest, db: Session = Depends(get_db)):
+    quote = db.query(models.Quotation).filter(models.Quotation.id == id).first()
+    if not quote:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+        
+    user = db.query(models.User).filter(models.User.id == req.requested_by_user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    try:
+        approval = submit_for_approval(db, quote, user)
+        db.commit()
+        db.refresh(quote)
+        if approval:
+            db.refresh(approval)
+        return {"quotation": quote, "approval": approval}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
 
-
-# ==========================================
-# APPROVALS
-# ==========================================
-
-@app.get("/approvals", tags=["Approvals"])
-def list_approvals(db: Session = Depends(get_db)):
-    return db.query(models.Approval).all()
-
-
-@app.get("/approvals/{approval_id}", tags=["Approvals"])
-def get_approval(
-    approval_id: int,
-    db: Session = Depends(get_db)
-):
-    approval = (
-        db.query(models.Approval)
-        .filter(models.Approval.id == approval_id)
-        .first()
-    )
-
+@app.post("/api/approvals/{id}/action", response_model=schemas.QuotationResponse, tags=["Approvals"])
+def process_approval_endpoint(id: int, req: schemas.ApprovalActionRequest, db: Session = Depends(get_db)):
+    approval = db.query(models.Approval).filter(models.Approval.id == id).first()
     if not approval:
-        raise HTTPException(
-            status_code=404,
-            detail="Approval not found"
-        )
-
-    return approval
+        raise HTTPException(status_code=404, detail="Approval not found")
+        
+    user = db.query(models.User).filter(models.User.id == req.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    try:
+        process_approval(db, approval, user, req.action, req.reason)
+        db.commit()
+        db.refresh(approval.quotation)
+        return approval.quotation
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except PermissionError as e:
+        db.rollback()
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==========================================
