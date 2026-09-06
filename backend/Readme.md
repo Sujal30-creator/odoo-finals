@@ -10,31 +10,35 @@ The backend handles the core business logic, including:
 - Quotation Generation & Margin Calculation
 - Inventory & Fulfillment Logic
 - Billing & Subscriptions
+- **AI Integration**: Next Best Action Engine, Semantic Product Recommendations, AI Pricing Advisor, and Deal Health Anomaly Detection.
 
 ## 🛠 Tech Stack
-*(Update this section once the exact frameworks are decided, e.g., Node.js/Express, Python/FastAPI, Go, Django, etc.)*
+- **Language**: Python 3.9+
+- **Framework**: FastAPI
+- **Database ORM**: SQLAlchemy (SQLite for local MVP)
+- **Server**: Uvicorn
+- **AI / Embeddings**: OpenAI API (GPT-4o and text-embedding models)
+- **Testing**: Pytest
 
 ## ⚙️ Setup & Installation
 1. Navigate to this directory:
    ```bash
    cd backend
    ```
-2. Install dependencies (update command based on chosen stack):
+2. Activate the virtual environment and install dependencies:
    ```bash
-   # Example for Python
+   source .venv/bin/activate
    pip install -r requirements.txt
-   # OR Example for Node
-   npm install
    ```
 3. Set up environment variables:
-   Copy `.env.example` to `.env` and fill in your secrets.
+   Create a `.env` file and add your OpenAI API key for AI features:
+   ```env
+   OPENAI_API_KEY=your_openai_api_key_here
+   ```
 
 4. Run the development server:
    ```bash
-   # Example
-   npm run dev
-   # OR
-   python main.py
+   uvicorn main:app --reload --port 8000
    ```
 
 ## 📖 Architecture & Contracts
