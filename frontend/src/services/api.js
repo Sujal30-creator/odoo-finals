@@ -54,8 +54,12 @@ export const api = {
     const res = await apiClient.post('/api/quotations', data);
     return res.data;
   },
-  addQuoteLine: async (id, lineData) => {
-    const res = await apiClient.post(`/api/quotations/${id}/lines`, lineData);
+  addQuoteLine: async (quotationId, line) => {
+    const res = await apiClient.post(`/api/quotations/${quotationId}/lines`, line);
+    return res.data;
+  },
+  updateQuoteLine: async (quotationId, lineId, updates) => {
+    const res = await apiClient.patch(`/api/quotations/${quotationId}/lines/${lineId}`, updates);
     return res.data;
   },
   evaluateDiscount: async (id) => {
@@ -74,6 +78,15 @@ export const api = {
   },
   getRecommendations: async (id) => {
     const res = await apiClient.get(`/api/quotations/${id}/recommendations`);
+    return res.data;
+  },
+  getSimilarDeals: async (id) => {
+    const res = await apiClient.get(`/api/quotations/${id}/similar-deals`);
+    return res.data;
+  },
+  getNextBestAction: async (id) => {
+
+    const res = await apiClient.get(`/api/quotations/${id}/next-best-action`);
     return res.data;
   },
   confirmQuotation: async (id) => {
@@ -172,6 +185,18 @@ export const api = {
       { comment, proposed_discount_percent: proposed_discount_percent !== '' && proposed_discount_percent !== null ? Number(proposed_discount_percent) : null },
       { headers: { 'X-Customer-Id': String(customerId) } }
     );
+    return res.data;
+  },
+
+  // Pricing Advisor
+  getPricingAdvisor: async (id) => {
+    const res = await apiClient.get(`/api/quotations/${id}/pricing-advisor`);
+    return res.data;
+  },
+  applyQuotationDiscount: async (id, discountPercent) => {
+    const res = await apiClient.patch(`/api/quotations/${id}/apply-discount`, {
+      discount_percent: Number(discountPercent),
+    });
     return res.data;
   },
 };

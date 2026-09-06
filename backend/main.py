@@ -3,6 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session, selectinload
 import hashlib
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from database import get_db
 import models
@@ -303,6 +307,80 @@ def get_recommendations_endpoint(id: int, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Recommendation service error: {str(e)}")
 
+@app.get("/api/quotations/{id}/similar-deals", response_model=schemas.SimilarDealResponse, tags=["Quotations"])
+def get_similar_deals_endpoint(id: int, db: Session = Depends(get_db)):
+    """
+    Return semantically similar historical quotations.
+    Uses OpenAI embeddings, keys off real quotation text fields.
+    """
+    from services.recommendation_service import get_similar_deals
+    try:
+        result = get_similar_deals(db, quotation_id=id)
+        return result
+    except LookupError:
+        raise HTTPException(status_code=404, detail=f"Quotation {id} not found")
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Similar deals error: {str(e)}")
+
+@app.get("/api/quotations/{id}/next-best-action", response_model=schemas.NextBestActionResponse, tags=["Quotations"])
+
+def get_next_best_action_endpoint(id: int, db: Session = Depends(get_db)):
+    """
+    Return the highest-priority next action for a quotation.
+    Deterministic, rule-based. Read-only. Does not modify any data.
+    Not exposed to customer-role users (use role guards in frontend).
+    """
+    from services.next_best_action_service import get_next_best_action
+    quote = db.query(models.Quotation).filter(models.Quotation.id == id).first()
+    if not quote:
+        raise HTTPException(status_code=404, detail=f"Quotation {id} not found")
+    try:
+        return get_next_best_action(db, quote)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Next Best Action error: {str(e)}")
+
+
+@app.get("/api/quotations/{id}/pricing-advisor", response_model=schemas.PricingAdvisorResponse, tags=["Quotations"])
+def get_pricing_advisor_endpoint(id: int, db: Session = Depends(get_db)):
+    from services.pricing_advisor_service import get_discount_recommendation
+    try:
+        return get_discount_recommendation(db, id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Pricing advisor error: {str(e)}")
+
+
+@app.patch("/api/quotations/{id}/apply-discount", response_model=schemas.QuotationResponse, tags=["Quotations"])
+def apply_quotation_discount(id: int, req: schemas.QuoteLineDiscountUpdateRequest, db: Session = Depends(get_db)):
+    quote = db.query(models.Quotation).filter(models.Quotation.id == id).first()
+    if not quote:
+        raise HTTPException(status_code=404, detail=f"Quotation {id} not found")
+    
+    # Update all lines
+    for line in quote.lines:
+        line.discount_percent = req.discount_percent
+        line_subtotal = float(line.quantity) * float(line.unit_price)
+        line.line_total = line_subtotal * (1 - float(req.discount_percent) / 100.0)
+
+    # Re-evaluate governance to update risk_score
+    from services.discount_service import evaluate_quotation_discount
+    evaluate_quotation_discount(db, quote)
+
+    # Recalculate quote totals
+    quote.subtotal = sum(float(l.quantity) * float(l.unit_price) for l in quote.lines)
+    quote.discount_total = sum((float(l.quantity) * float(l.unit_price)) * (float(req.discount_percent) / 100.0) for l in quote.lines)
+    quote.tax_total = sum(float(l.line_total) * (float(l.tax_rate) / 100.0) for l in quote.lines)
+    quote.grand_total = quote.subtotal - quote.discount_total + quote.tax_total
+
+    db.commit()
+    db.refresh(quote)
+    return quote
+
 @app.post("/api/quotations/{id}/confirm", tags=["Orders"])
 def confirm_quotation_endpoint(id: int, db: Session = Depends(get_db)):
     quote = db.query(models.Quotation).filter(models.Quotation.id == id).first()
@@ -343,6 +421,33 @@ def add_quote_line(id: int, line: schemas.QuoteLineCreate, db: Session = Depends
     quote.subtotal = float(quote.subtotal or 0) + (float(line.quantity) * float(line.unit_price))
     quote.discount_total = float(quote.discount_total or 0) + (float(line.quantity) * float(line.unit_price) * (float(line.discount_percent) / 100.0))
     quote.grand_total = float(quote.grand_total or 0) + line_total
+    
+    db.commit()
+    db.refresh(db_line)
+    return db_line
+
+@app.patch("/api/quotations/{id}/lines/{line_id}", response_model=schemas.QuoteLineResponse, tags=["Quotations"])
+def update_quote_line(id: int, line_id: int, req: schemas.QuoteLineUpdate, db: Session = Depends(get_db)):
+    quote = db.query(models.Quotation).filter(models.Quotation.id == id).first()
+    if not quote:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+    
+    db_line = db.query(models.QuoteLine).filter(models.QuoteLine.id == line_id, models.QuoteLine.quotation_id == id).first()
+    if not db_line:
+        raise HTTPException(status_code=404, detail="Quote line not found")
+        
+    if req.quantity is not None:
+        if req.quantity <= 0:
+            raise HTTPException(status_code=400, detail="Quantity must be greater than 0")
+        db_line.quantity = req.quantity
+        
+    # Re-calculate line total
+    db_line.line_total = float(db_line.quantity) * float(db_line.unit_price) * (1 - float(db_line.discount_percent) / 100.0)
+    
+    # Re-calculate quotation totals
+    quote.subtotal = sum(float(l.quantity) * float(l.unit_price) for l in quote.lines)
+    quote.discount_total = sum(float(l.quantity) * float(l.unit_price) * (float(l.discount_percent) / 100.0) for l in quote.lines)
+    quote.grand_total = sum(float(l.line_total) for l in quote.lines)
     
     db.commit()
     db.refresh(db_line)

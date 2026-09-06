@@ -19,9 +19,7 @@ import {
 export default function ApprovalCenterPage() {
   const { user } = useAuth();
   const [approvals, setApprovals] = useState([]);
-  const [users, setUsers] = useState([]);
   const [activeTab, setActiveTab] = useState('pending'); // 'pending' | 'all' | 'approved' | 'rejected'
-  const [actingUserId, setActingUserId] = useState(user ? String(user.id) : '4');
   const [actionReasons, setActionReasons] = useState({});
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState(null);
@@ -32,26 +30,8 @@ export default function ApprovalCenterPage() {
     setLoading(true);
     setError(null);
     try {
-      const [apprData, userData] = await Promise.all([
-        api.getApprovals(),
-        api.getUsers(),
-      ]);
-
+      const apprData = await api.getApprovals();
       setApprovals(apprData || []);
-      setUsers(userData || []);
-
-      if (user && (user.role === 'manager' || user.role === 'finance' || user.role === 'admin')) {
-        setActingUserId(String(user.id));
-      } else {
-        const managerUser = userData?.find(
-          (u) => u.role === 'sales_manager' || u.role === 'manager' || u.id === 4
-        );
-        if (managerUser) {
-          setActingUserId(String(managerUser.id));
-        } else if (userData && userData.length > 0) {
-          setActingUserId(String(userData[0].id));
-        }
-      }
     } catch (err) {
       setError(err.formattedMessage || 'Failed to load approvals from backend');
     } finally {
@@ -72,7 +52,7 @@ export default function ApprovalCenterPage() {
 
     try {
       await api.processApproval(approvalId, {
-        user_id: Number(actingUserId),
+        user_id: user.id,
         action: action,
         reason: reason,
       });
@@ -111,24 +91,6 @@ export default function ApprovalCenterPage() {
           <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
             Review discount exceptions, evaluate governance criteria, and route deals
           </p>
-        </div>
-
-        {/* Approver Switcher */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-surface)', padding: '6px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
-          <UserCheck size={16} style={{ color: '#818cf8' }} />
-          <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Acting as:</span>
-          <select
-            className="form-select"
-            style={{ width: 'auto', padding: '4px 8px', fontSize: '0.85rem' }}
-            value={actingUserId}
-            onChange={(e) => setActingUserId(e.target.value)}
-          >
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name || u.email} ({u.role})
-              </option>
-            ))}
-          </select>
         </div>
       </div>
 

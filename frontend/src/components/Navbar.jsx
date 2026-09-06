@@ -201,48 +201,7 @@ export default function Navbar() {
                     padding: 8,
                   }}
                 >
-                  <div style={{ padding: '8px 10px', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                    Switch Demo Persona
-                  </div>
-
-                  {DEMO_PERSONAS.map((p) => {
-                    const active = user.email === p.email;
-                    return (
-                      <div
-                        key={p.email}
-                        onClick={() => {
-                          switchUser(p);
-                          setSwitcherOpen(false);
-                          if (p.role === 'customer') navigate('/portal');
-                          else if (p.role === 'manager') navigate('/approvals');
-                          else if (p.role === 'finance') navigate('/billing');
-                          else navigate('/');
-                        }}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 10,
-                          padding: '8px 10px',
-                          borderRadius: 'var(--radius-sm)',
-                          background: active ? 'rgba(79, 70, 229, 0.15)' : 'transparent',
-                          cursor: 'pointer',
-                          marginBottom: 4,
-                        }}
-                      >
-                        <span style={{ fontSize: '1.2rem' }}>{p.icon}</span>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: active ? '#818cf8' : 'var(--text-main)' }}>
-                            {p.name}
-                          </div>
-                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                            {p.title}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: 6, paddingTop: 6 }}>
+                  <div style={{ paddingTop: 4 }}>
                     <button
                       onClick={handleLogout}
                       className="btn btn-secondary btn-sm"

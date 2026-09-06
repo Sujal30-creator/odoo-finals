@@ -286,3 +286,75 @@ def test_embedding_cache(db):
     # (only query embedding is always recomputed; product embeddings are cached)
     # call_count should only grow by 1 (for the query) on the second call
     assert call_count == first_call_count + 1
+
+
+# ---------------------------------------------------------------------------
+# Similar Deals Tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def clear_quotation_embedding_cache():
+    svc._quotation_embedding_cache.clear()
+    yield
+    svc._quotation_embedding_cache.clear()
+
+
+def test_similar_deals_nonexistent_quotation(db):
+    with pytest.raises(LookupError):
+        svc.get_similar_deals(db, 9999)
+
+
+def test_similar_deals_empty_if_no_others(db):
+    rep, cust = _seed_base(db)
+    p = _add_product(db, sku="1", name="Product 1")
+    q = _add_quotation(db, rep, cust, [(p, 10)])
+
+    res = svc.get_similar_deals(db, q.id)
+    assert res["quotation_id"] == q.id
+    assert res["similar_deals"] == []
+
+
+@patch.object(svc, "_get_embedding")
+def test_similar_deals_ranking(mock_embed, db):
+    rep, cust = _seed_base(db)
+    p1 = _add_product(db, sku="1", name="Product 1")
+    p2 = _add_product(db, sku="2", name="Product 2")
+
+    # Q1: Target quotation
+    list1 = [(p1, 100)]
+    q1 = _add_quotation(db, rep, cust, list1)
+    
+    # Q2: Very similar (also has p1)
+    list2 = [(p1, 100), (p2, 10)]
+    q2 = _add_quotation(db, rep, cust, list2)
+    q2.quotation_number = "Q2-Sim"
+    q2.status = "approved"
+    
+    # Q3: Different (has p2)
+    list3 = [(p2, 100)]
+    q3 = _add_quotation(db, rep, cust, list3)
+    q3.quotation_number = "Q3-Sim"
+
+    db.commit()
+
+    # Mock embeddings based on text content
+    def mock_embedding_impl(text):
+        if "Product 1" in text:
+            return _unit_vec([1, 0, 0])
+        elif "Product 2" in text:
+            return _unit_vec([0, 1, 0])
+        return _unit_vec([0, 0, 1])
+
+    mock_embed.side_effect = mock_embedding_impl
+
+    res = svc.get_similar_deals(db, q1.id)
+    deals = res["similar_deals"]
+    assert len(deals) == 2
+    
+    # Q2 should be most similar
+    assert deals[0]["quotation_id"] == q2.id
+    assert deals[0]["similarity_score"] > deals[1]["similarity_score"]
+    
+    # Check insight and fields
+    assert "approved" in deals[0]["status"]
+    assert "pricing_insight" in deals[0]

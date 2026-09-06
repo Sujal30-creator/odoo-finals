@@ -70,16 +70,6 @@ export default function RoleGuard({ children, allowedRoles = [] }) {
                 <ArrowLeft size={16} />
                 <span>Return to My Dashboard</span>
               </Link>
-
-              {recommendedPersona && (
-                <button
-                  onClick={() => switchUser(recommendedPersona)}
-                  className="btn btn-primary"
-                >
-                  <UserCheck size={16} />
-                  <span>Switch to {recommendedPersona.title}</span>
-                </button>
-              )}
             </div>
           </div>
         </Card>

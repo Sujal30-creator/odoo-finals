@@ -46,9 +46,9 @@ def process_approval(db: Session, approval: Approval, user: User, action: str, r
         raise ValueError("Invalid action.")
 
     # Authorization
-    if approval.approval_level == "sales_manager" and user.role not in ["sales_manager", "finance"]:
-        raise PermissionError("Unauthorized: Need sales_manager or finance role.")
-    if approval.approval_level == "finance" and user.role != "finance":
+    if approval.approval_level == "sales_manager" and user.role not in ["sales_manager", "manager", "finance", "admin"]:
+        raise PermissionError("Unauthorized: Need sales_manager, manager, or finance role.")
+    if approval.approval_level == "finance" and user.role not in ["finance", "admin"]:
         raise PermissionError("Unauthorized: Need finance role.")
 
     quotation = approval.quotation

@@ -226,3 +226,122 @@ def get_recommendations(
         "quotation_id": quotation_id,
         "recommendations": recommendations,
     }
+
+
+# ---------------------------------------------------------------------------
+# Similar Historical Deal Finder
+# ---------------------------------------------------------------------------
+_quotation_embedding_cache: Dict[Tuple[int, str], List[float]] = {}
+
+
+def _quotation_text(quotation: models.Quotation) -> str:
+    """Build a deterministic text description from real Quotation/Customer fields."""
+    parts = []
+    if quotation.customer and quotation.customer.tier:
+        parts.append(f"Customer Tier: {quotation.customer.tier}")
+    
+    product_summaries = []
+    for line in quotation.lines:
+        if line.product:
+            desc = f"- {line.product.name}"
+            if line.product.category:
+                desc += f" ({line.product.category})"
+            if line.product.product_type:
+                desc += f" [{line.product.product_type}]"
+            product_summaries.append(desc)
+            
+    if product_summaries:
+        parts.append("Products Included:\n" + "\n".join(product_summaries))
+        
+    parts.append(f"Status: {quotation.status}")
+    return "\n".join(parts)
+
+
+def _get_quotation_embedding(quotation: models.Quotation) -> List[float]:
+    """Return cached embedding for quotation, fetching from OpenAI on cache miss."""
+    text = _quotation_text(quotation)
+    fp = _fingerprint(text)
+    cache_key = (quotation.id, fp)
+    if cache_key not in _quotation_embedding_cache:
+        _quotation_embedding_cache[cache_key] = _get_embedding(text)
+    return _quotation_embedding_cache[cache_key]
+
+
+def get_similar_deals(db: Session, quotation_id: int, top_n: int = 3) -> dict:
+    """
+    Return top-N similar historical deals for a quotation.
+    Raises LookupError if quotation not found.
+    Returns dict with 'similar_deals' list.
+    """
+    quote = (
+        db.query(models.Quotation)
+        .filter(models.Quotation.id == quotation_id)
+        .first()
+    )
+    if quote is None:
+        raise LookupError(f"Quotation {quotation_id} not found")
+
+    try:
+        query_embedding = _get_quotation_embedding(quote)
+    except Exception:
+        return {"quotation_id": quotation_id, "similar_deals": []}
+
+    historical_quotes = (
+        db.query(models.Quotation)
+        .filter(models.Quotation.id != quotation_id)
+        .order_by(models.Quotation.id.desc())
+        .limit(10)
+        .all()
+    )
+    
+    scored = []
+    for h_quote in historical_quotes:
+        if not h_quote.lines:
+            continue
+        try:
+            h_emb = _get_quotation_embedding(h_quote)
+            score = _cosine_similarity(query_embedding, h_emb)
+            scored.append((score, h_quote))
+        except Exception:
+            continue
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = scored[:top_n]
+
+    similar_deals = []
+    
+    # Generate pricing insight from approved deals in top
+    approved_deals = [h for _, h in top if h.status == "approved"]
+    discounts = []
+    for a in approved_deals:
+        sub = float(a.subtotal) if a.subtotal else 0.0
+        dt = float(a.discount_total) if a.discount_total else 0.0
+        if sub > 0:
+            discounts.append(dt / sub * 100)
+    
+    insight = None
+    if discounts:
+        min_d = round(min(discounts), 1)
+        max_d = round(max(discounts), 1)
+        if min_d == max_d:
+            insight = f"Similar approved quotations used a discount of {min_d}%."
+        else:
+            insight = f"Similar approved quotations used discounts between {min_d}%–{max_d}%."
+
+    for score, h_quote in top:
+        similar_deals.append({
+            "quotation_id": h_quote.id,
+            "quotation_number": h_quote.quotation_number,
+            "similarity_score": round(score, 4),
+            "status": h_quote.status,
+            "grand_total": float(h_quote.grand_total) if h_quote.grand_total else 0.0,
+            "discount_total": float(h_quote.discount_total) if h_quote.discount_total else 0.0,
+            "customer_tier": h_quote.customer.tier if h_quote.customer else "",
+            "risk_score": float(h_quote.risk_score) if h_quote.risk_score else 0.0,
+            "pricing_insight": insight,
+        })
+
+    return {
+        "quotation_id": quotation_id,
+        "similar_deals": similar_deals
+    }

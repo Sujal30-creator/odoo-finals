@@ -128,7 +128,7 @@ export default function AuthPage() {
         </div>
       )}
 
-      <div className="grid-2" style={{ alignItems: 'start' }}>
+      <div style={{ maxWidth: 500, margin: '0 auto', width: '100%' }}>
         {/* Left: Login / Register Card */}
         <Card>
           {/* Tab Switcher */}
@@ -153,6 +153,30 @@ export default function AuthPage() {
 
           {tab === 'login' ? (
             <form onSubmit={handleLoginSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Sign In As (Demo Persona)</label>
+                <select 
+                  className="form-select"
+                  onChange={(e) => {
+                    const persona = DEMO_PERSONAS.find(p => p.email === e.target.value);
+                    if (persona) {
+                      setLoginEmail(persona.email);
+                      setLoginPassword('password123');
+                    } else if (e.target.value === 'custom') {
+                      setLoginEmail('');
+                      setLoginPassword('');
+                    }
+                  }}
+                  defaultValue={loginEmail}
+                >
+                  <option value="" disabled>Select a role...</option>
+                  {DEMO_PERSONAS.map(p => (
+                    <option key={p.email} value={p.email}>{p.name} ({p.role.replace('_', ' ')})</option>
+                  ))}
+                  <option value="custom">Custom / Other Account...</option>
+                </select>
+              </div>
+
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">Email Address</label>
                 <input
@@ -255,61 +279,6 @@ export default function AuthPage() {
               </button>
             </form>
           )}
-        </Card>
-
-        {/* Right: Quick Demo Persona Switcher */}
-        <Card title="Quick Demo Persona Switcher">
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: 16 }}>
-            For rapid evaluation, select any pre-configured role below to experience its specific views and authorized operations:
-          </p>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {DEMO_PERSONAS.map((persona) => {
-              return (
-                <div
-                  key={persona.email}
-                  onClick={() => handleQuickPersona(persona)}
-                  style={{
-                    background: 'var(--bg-surface-elevated)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-sm)',
-                    padding: 14,
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 12,
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--primary)';
-                    e.currentTarget.style.background = 'rgba(79, 70, 229, 0.08)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--border-subtle)';
-                    e.currentTarget.style.background = 'var(--bg-surface-elevated)';
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <span style={{ fontSize: '1.6rem' }}>{persona.icon}</span>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>{persona.name}</span>
-                        <span className="badge badge-blue" style={{ fontSize: '0.7rem' }}>
-                          {persona.role}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                        {persona.description}
-                      </div>
-                    </div>
-                  </div>
-
-                  <ArrowRight size={16} style={{ color: 'var(--primary)', flexShrink: 0 }} />
-                </div>
-              );
-            })}
-          </div>
         </Card>
       </div>
 

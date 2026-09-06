@@ -10,6 +10,9 @@ class QuoteLineCreate(BaseModel):
     tax_rate: float = 0.0
     unit_cost: float = 0.0
 
+class QuoteLineUpdate(BaseModel):
+    quantity: Optional[int] = None
+
 class QuotationCreate(BaseModel):
     customer_id: int
     sales_rep_id: int
@@ -112,6 +115,44 @@ class RecommendationResponse(BaseModel):
     quotation_id: int
     recommendations: List[RecommendationItem]
     message: Optional[str] = None
+
+class NextBestActionResponse(BaseModel):
+    quotation_id: int
+    priority: str           # "critical" | "warning" | "normal"
+    action_type: str        # machine-readable identifier
+    action: str             # human-readable instruction
+    reason: str             # explainable why
+    source_signals: List[str] = []  # anomaly types that triggered this
+
+class SimilarDealItem(BaseModel):
+    quotation_id: int
+    quotation_number: str
+    similarity_score: float
+    status: str
+    grand_total: float
+    discount_total: float
+    customer_tier: Optional[str] = None
+    risk_score: float
+    pricing_insight: Optional[str] = None
+
+class SimilarDealResponse(BaseModel):
+
+    quotation_id: int
+    similar_deals: List[SimilarDealItem]
+
+class PricingAdvisorResponse(BaseModel):
+    quotation_id: int
+    current_discount_percent: float
+    allowed_discount_percent: float
+    recommended_discount_percent: float
+    expected_margin_percent: float
+    approval_required: bool
+    recommendation_strength: str
+    reason: str
+    supporting_factors: List[str]
+
+class QuoteLineDiscountUpdateRequest(BaseModel):
+    discount_percent: float = Field(..., ge=0, le=100)
 
 class SubmitApprovalResponse(BaseModel):
     quotation: QuotationResponse
