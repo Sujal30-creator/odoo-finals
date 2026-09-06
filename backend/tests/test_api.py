@@ -810,3 +810,70 @@ def test_end_to_end_reapproval_lifecycle():
     assert approvals_history[1].id == appr2_id
     assert approvals_history[1].status == "pending"
 
+def test_list_quotations_and_deal_health():
+    db = TestingSessionLocal()
+    q = models.Quotation(customer_id=1, sales_rep_id=1, quotation_number="Q_LIST_TEST", status="approved", grand_total=500.0)
+    db.add(q)
+    db.commit()
+    db.refresh(q)
+    q_id = q.id
+    db.close()
+
+    # Test list quotations
+    resp = client.get("/api/quotations")
+    assert resp.status_code == 200
+    quotes = resp.json()
+    assert any(item["id"] == q_id for item in quotes)
+
+    # Test deal health
+    resp_health = client.get(f"/api/quotations/{q_id}/deal-health")
+    assert resp_health.status_code == 200
+    data = resp_health.json()
+    assert data["quotation_id"] == q_id
+    assert "health_status" in data
+
+    # Test confirm quotation to order
+    resp_confirm = client.post(f"/api/quotations/{q_id}/confirm")
+    assert resp_confirm.status_code == 200
+    order_data = resp_confirm.json()
+    assert order_data["quotation_id"] == q_id
+    assert order_data["order_number"].startswith("ORD-")
+
+def test_list_approvals():
+    resp = client.get("/api/approvals")
+    assert resp.status_code == 200
+    approvals = resp.json()
+    assert isinstance(approvals, list)
+
+def test_auth_login_and_register():
+    import uuid
+    test_email = f"user_{uuid.uuid4().hex[:8]}@example.com"
+    
+    # 1. Register new user
+    reg_resp = client.post("/api/auth/register", json={
+        "name": "Test Rep",
+        "email": test_email,
+        "password": "mypassword123",
+        "role": "sales_rep"
+    })
+    assert reg_resp.status_code == 200
+    data = reg_resp.json()
+    assert data["user"]["email"] == test_email
+    assert data["user"]["role"] == "sales_rep"
+    assert "token" in data
+
+    # 2. Login with correct password
+    login_resp = client.post("/api/auth/login", json={
+        "email": test_email,
+        "password": "mypassword123"
+    })
+    assert login_resp.status_code == 200
+    assert login_resp.json()["user"]["email"] == test_email
+
+    # 3. Login with wrong password
+    bad_resp = client.post("/api/auth/login", json={
+        "email": test_email,
+        "password": "wrongpassword"
+    })
+    assert bad_resp.status_code == 401
+

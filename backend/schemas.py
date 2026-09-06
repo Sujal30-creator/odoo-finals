@@ -61,6 +61,58 @@ class ApprovalResponse(BaseModel):
     reason: Optional[str]
     model_config = ConfigDict(from_attributes=True)
 
+class QuotationSummaryResponse(BaseModel):
+    id: int
+    quotation_number: str
+    customer_id: int
+    sales_rep_id: int
+    status: str
+    subtotal: float
+    discount_total: float
+    tax_total: float
+    grand_total: float
+    risk_score: float
+    model_config = ConfigDict(from_attributes=True)
+
+class ApprovalDetailResponse(BaseModel):
+    id: int
+    quotation_id: int
+    requested_by: int
+    approver_id: Optional[int] = None
+    reason: Optional[str] = None
+    requested_discount: Optional[float] = None
+    status: str
+    approval_level: Optional[str] = None
+    created_at: Optional[datetime] = None
+    quotation: Optional[QuotationSummaryResponse] = None
+    model_config = ConfigDict(from_attributes=True)
+
+class AnomalyResponse(BaseModel):
+    type: str
+    severity: str
+    message: str
+
+class DealHealthResponse(BaseModel):
+    quotation_id: int
+    quotation_number: Optional[str] = None
+    health_status: str
+    anomalies: List[AnomalyResponse] = []
+
+class RecommendationItem(BaseModel):
+    product_id: int
+    product_name: str
+    similarity_score: float
+    price: float
+    unit_cost: float
+    margin: float
+    margin_percent: float
+    reason: str
+
+class RecommendationResponse(BaseModel):
+    quotation_id: int
+    recommendations: List[RecommendationItem]
+    message: Optional[str] = None
+
 class SubmitApprovalResponse(BaseModel):
     quotation: QuotationResponse
     approval: Optional[ApprovalResponse]
@@ -168,3 +220,29 @@ class PortalQuotationResponse(BaseModel):
 class PortalNegotiationRequest(BaseModel):
     comment: str = Field(..., min_length=1)
     proposed_discount_percent: Optional[float] = Field(None, ge=0, le=100)
+
+# ==========================================
+# AUTH SCHEMAS
+# ==========================================
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class RegisterRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+    role: str = "sales_rep"
+
+class AuthUserResponse(BaseModel):
+    id: int
+    name: str
+    email: str
+    role: str
+    customer_id: Optional[int] = None
+    model_config = ConfigDict(from_attributes=True)
+
+class AuthResponse(BaseModel):
+    user: AuthUserResponse
+    token: str = "mock-jwt-token"
